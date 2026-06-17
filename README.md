@@ -24,7 +24,7 @@
 ## 核心功能
 
 - 无限画布：多画布项目、节点拖拽缩放、连线、小地图、撤销重做、导入导出。
-- AI 创作：浏览器前台直连你配置的 OpenAI 兼容接口，支持文生图、图生图、参考图编辑、文本问答、音频和视频生成；Seedance 2.0 可通过火山方舟 Agent Plan 接入。
+- AI 创作：通过后台配置 OpenAI 兼容 / Gemini 渠道，并由同源代理转发请求，支持文生图、图生图、参考图编辑、文本问答、音频和视频生成；真实 Base URL 与 API Key 仅保存在服务端。
 - 画布助手：围绕选中节点和上游节点对话、生图，并把结果插回画布。
 - 本地 Agent：通过本机 Canvas Agent 连接 Codex / Claude Code，让 Agent 通过 MCP 操作当前画布。
 - 提示词库：Next.js route 抓取多个 GitHub 开源项目，并缓存在运行实例内存中。
@@ -36,31 +36,68 @@
 ## 技术栈
 
 - 前端：Next.js、React、TypeScript、Tailwind CSS、Ant Design、Zustand、TanStack Query。
-- 少量 Next.js Route：第三方提示词内存缓存、WebDAV 可选代理。
-- 部署：Vercel 或 Docker。
+- Next.js Route：后台配置、AI 同源代理、调用日志、第三方提示词内存缓存、WebDAV 可选代理。
+- 部署：推荐 Docker Compose，自带后台配置与调用日志持久化。
 
 ## 快速开始
 
-推荐直接导入仓库到 Vercel，根目录已提供 `vercel.json`，会构建 `web/`。AI API Key、Base URL、画布、素材和生成记录默认保存在浏览器本地。
+本分支面向服务器自部署，推荐从当前仓库拉取代码并用 Docker Compose 启动。AI 渠道、API Key、WebDAV 等敏感配置在后台统一管理，前台只读取安全配置。
 
 ```bash
-git clone git@github.com:basketikun/infinite-canvas.git
-cd infinite-canvas
+git clone https://github.com/liufuzz/infinite-canvas-yiker.git
+cd infinite-canvas-yiker
+
+cp .env.example .env
+openssl rand -base64 48
+```
+
+编辑 `.env`，至少配置：
+
+```env
+INFINITE_CANVAS_ADMIN_PASSWORD=你的后台密码
+INFINITE_CANVAS_ADMIN_SECRET=上一步生成的随机字符串
+INFINITE_CANVAS_CONFIG_FILE=/data/infinite-canvas/config.json
+INFINITE_CANVAS_LOG_FILE=/data/infinite-canvas/ai-call-logs.json
+```
+
+启动：
+
+```bash
+mkdir -p data
+docker compose up -d --build
+docker compose logs -f app
+```
+
+运行后默认端口 3000：
+
+```text
+http://服务器IP:3000
+http://服务器IP:3000/admin/config
+http://服务器IP:3000/admin/logs
+```
+
+首次部署后进入 `/admin/config`，用 `.env` 中的管理员密码登录，配置渠道、模型、API Key 和生成偏好。配置文件与调用日志会持久化到宿主机 `./data`。
+
+本地开发：
+
+```bash
 cd web
 bun install
 bun run dev
 ```
 
-Docker 运行：
+更多服务器部署说明见 [DEPLOY.md](DEPLOY.md)。
+
+如果服务器上已经部署过原仓库，可以在原项目目录备份后切换 remote：
 
 ```bash
-docker build -t infinite-canvas .
-docker run --rm -p 3000:3000 infinite-canvas
+docker compose down
+git remote set-url origin https://github.com/liufuzz/infinite-canvas-yiker.git
+git fetch origin
+git checkout main
+git reset --hard origin/main
+docker compose up -d --build
 ```
-
-运行后默认端口3000，可访问 `http://localhost:3000`。
-
-首次打开后进入右上角配置，填入自己的 OpenAI 兼容 `Base URL` 和 `API Key`。
 
 ## New API 自动配置
 
