@@ -300,8 +300,8 @@ export function normalizeModelOptionValue(value: string | undefined, channels: M
         const channel = channels.find((item) => item.id === decoded.channelId);
         return channel && channel.models.includes(decoded.model) ? model : "";
     }
-    const channel = channels.find((item) => item.models.includes(decoded?.model || model)) || channels[0];
-    return channel && channel.models.includes(decoded?.model || model) ? encodeChannelModel(channel.id, decoded?.model || model) : model;
+    const channel = channels.find((item) => item.models.includes(model)) || channels[0];
+    return channel && channel.models.includes(model) ? encodeChannelModel(channel.id, model) : model;
 }
 
 export function resolveModelChannel(config: AiConfig, value: string) {
@@ -372,6 +372,7 @@ function uniqueModelOptions(models: string[]) {
 
 export function buildApiUrl(baseUrl: string, path: string) {
     let normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, "");
+    if (normalizedBaseUrl.startsWith("/")) return `${normalizedBaseUrl}${path}`;
     normalizedBaseUrl = normalizeArkPlanBaseUrl(normalizedBaseUrl);
     const lowerBaseUrl = normalizedBaseUrl.toLowerCase();
     const apiBaseUrl = lowerBaseUrl.endsWith("/v1") || lowerBaseUrl.endsWith("/api/v3") || lowerBaseUrl.endsWith("/api/plan/v3") ? normalizedBaseUrl : `${normalizedBaseUrl}/v1`;

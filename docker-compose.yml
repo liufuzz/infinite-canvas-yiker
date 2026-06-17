@@ -1,7 +1,17 @@
 services:
   app:
-    image: ghcr.io/basketikun/infinite-canvas:latest
+    image: infinite-canvas:server-admin-config
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: infinite-canvas
+    env_file:
+      - .env
+    environment:
+      INFINITE_CANVAS_CONFIG_FILE: /data/infinite-canvas/config.json
+      INFINITE_CANVAS_LOG_FILE: /data/infinite-canvas/ai-call-logs.json
     ports:
       - "3000:3000"
+    volumes:
+      - ./data:/data/infinite-canvas
     restart: unless-stopped

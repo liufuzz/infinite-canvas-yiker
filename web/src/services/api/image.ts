@@ -65,6 +65,13 @@ type ResponseApiPayload = {
     msg?: string;
 };
 type ResponseStreamState = { buffer: string; text: string; payload?: ResponseApiPayload; error?: string };
+type ChatCompletionToolCall = { id?: string; type?: "function"; function?: { name?: string; arguments?: string } };
+type ChatCompletionPayload = {
+    choices?: Array<{ message?: { content?: string | null; tool_calls?: ChatCompletionToolCall[] } }>;
+    error?: { message?: string };
+    code?: number;
+    msg?: string;
+};
 
 type ImageApiResponse = {
     data?: Array<Record<string, unknown>>;
@@ -91,6 +98,16 @@ type GeminiPayload = {
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
 type RequestOptions = { signal?: AbortSignal };
+
+class AiFetchError extends Error {
+    constructor(
+        message: string,
+        readonly status: number,
+    ) {
+        super(message);
+        this.name = "AiFetchError";
+    }
+}
 
 const QUALITY_BASE: Record<string, number> = {
     low: 1024,
@@ -290,6 +307,50 @@ function toResponseTool(tool: ResponseFunctionTool): ResponseApiToolDefinition {
     };
 }
 
+function toChatMessages(messages: ResponseInputMessage[]) {
+    return messages.flatMap((message) => {
+        if ("type" in message) {
+            return [
+                {
+                    role: "assistant",
+                    content: "",
+                    tool_calls: [
+                        {
+                            id: message.call_id,
+                            type: "function",
+                            function: { name: message.name, arguments: message.arguments },
+                        },
+                    ],
+                },
+            ];
+        }
+        if (message.role === "tool") return [{ role: "tool", tool_call_id: message.tool_call_id, content: message.content }];
+        return [{ role: message.role, content: message.content }];
+    });
+}
+
+function toChatToolChoice(toolChoice: ToolChoice) {
+    if (typeof toolChoice === "string") return toolChoice;
+    return { type: "function", function: { name: toolChoice.name } };
+}
+
+function parseChatCompletionToolResponse(payload: ChatCompletionPayload): ToolResponseResult {
+    if (typeof payload.code === "number" && payload.code !== 0) throw new Error(payload.msg || "请求失败");
+    if (payload.error?.message) throw new Error(payload.error.message);
+    const message = payload.choices?.[0]?.message;
+    return {
+        content: message?.content || "",
+        toolCalls:
+            message?.tool_calls
+                ?.map((item) => ({
+                    id: item.id || "",
+                    type: "function" as const,
+                    function: { name: item.function?.name || "", arguments: item.function?.arguments || "{}" },
+                }))
+                .filter((item) => item.id && item.function.name) || [],
+    };
+}
+
 function parseToolResponse(payload: ResponseApiPayload): ToolResponseResult {
     const output = payload.output || [];
     const content =
@@ -393,7 +454,7 @@ async function requestStreamingResponse(config: AiConfig, body: Record<string, u
         body: JSON.stringify({ ...body, stream: true }),
         signal: options?.signal,
     });
-    if (!response.ok) throw new Error(await readFetchError(response, "请求失败"));
+    if (!response.ok) throw new AiFetchError(await readFetchError(response, "请求失败"), response.status);
     if (!response.body) {
         const payload = (await response.json()) as ResponseApiPayload;
         validateResponsePayload(payload);
@@ -415,6 +476,30 @@ async function requestStreamingResponse(config: AiConfig, body: Record<string, u
     validateResponsePayload(state.payload);
     const result = parseToolResponse(state.payload);
     return { ...result, content: state.text || result.content };
+}
+
+async function requestChatCompletionToolResponse(config: AiConfig, messages: ResponseInputMessage[], tools: ResponseFunctionTool[], toolChoice: ToolChoice, options?: RequestOptions): Promise<ToolResponseResult> {
+    const response = await fetch(aiApiUrl(config, "/chat/completions"), {
+        method: "POST",
+        headers: aiHeaders(config, "application/json"),
+        body: JSON.stringify({
+            model: config.model,
+            messages: toChatMessages(withSystemMessage(config, messages)),
+            tools,
+            tool_choice: toChatToolChoice(toolChoice),
+            stream: false,
+        }),
+        signal: options?.signal,
+    });
+    if (!response.ok) throw new AiFetchError(await readFetchError(response, "请求失败"), response.status);
+    return parseChatCompletionToolResponse((await response.json()) as ChatCompletionPayload);
+}
+
+function shouldFallbackToChatCompletions(error: unknown) {
+    if (!(error instanceof AiFetchError)) return false;
+    if ([404, 405, 501, 502, 503].includes(error.status)) return true;
+    const message = error.message.toLowerCase();
+    return message.includes("responses") || message.includes("temporarily unavailable") || message.includes("not found");
 }
 
 function toGeminiBody(config: AiConfig, messages: ResponseInputMessage[], extra?: Record<string, unknown>) {
@@ -707,13 +792,18 @@ export async function requestToolResponse(config: AiConfig, messages: ResponseIn
         if (requestConfig.apiFormat === "gemini") {
             return await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages, toGeminiToolOptions(tools, toolChoice)), onDelta, options);
         }
-        return await requestStreamingResponse(requestConfig, {
-            model: requestConfig.model,
-            input: toResponseInput(withSystemMessage(requestConfig, messages)),
-            tools: tools.map(toResponseTool),
-            tool_choice: toolChoice,
-            parallel_tool_calls: false,
-        }, onDelta, options);
+        try {
+            return await requestStreamingResponse(requestConfig, {
+                model: requestConfig.model,
+                input: toResponseInput(withSystemMessage(requestConfig, messages)),
+                tools: tools.map(toResponseTool),
+                tool_choice: toolChoice,
+                parallel_tool_calls: false,
+            }, onDelta, options);
+        } catch (error) {
+            if (shouldFallbackToChatCompletions(error)) return await requestChatCompletionToolResponse(requestConfig, messages, tools, toolChoice, options);
+            throw error;
+        }
     } catch (error) {
         throw new Error(readAxiosError(error, "请求失败"));
     }

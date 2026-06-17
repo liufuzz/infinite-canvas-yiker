@@ -4,14 +4,9 @@ import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import { App } from "antd";
 
-import { createModelChannel, useConfigStore } from "@/stores/use-config-store";
-
 export function ClientRootInit({ children }: { children: ReactNode }) {
     const { message } = App.useApp();
     const handledConfigParams = useRef(false);
-    const updateConfig = useConfigStore((state) => state.updateConfig);
-    const config = useConfigStore((state) => state.config);
-    const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
 
     useEffect(() => {
         if (handledConfigParams.current) return;
@@ -25,26 +20,8 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         searchParams.delete("apiKey");
         searchParams.delete("apikey");
         window.history.replaceState(null, "", `${window.location.pathname}${searchParams.size ? `?${searchParams}` : ""}${window.location.hash}`);
-        const firstChannel = config.channels[0];
-        updateConfig(
-            "channels",
-            firstChannel
-                ? config.channels.map((channel, index) =>
-                      index === 0
-                          ? {
-                                ...channel,
-                                ...(baseUrl ? { baseUrl } : {}),
-                                ...(apiKey ? { apiKey } : {}),
-                            }
-                          : channel,
-                  )
-                : [createModelChannel({ id: "default", name: "默认渠道", baseUrl: baseUrl || undefined, apiKey: apiKey || "" })],
-        );
-        if (baseUrl) updateConfig("baseUrl", baseUrl);
-        if (apiKey) updateConfig("apiKey", apiKey);
-        openConfigDialog(false);
-        message.success("已导入本地直连配置");
-    }, [config.channels, message, openConfigDialog, updateConfig]);
+        message.info("当前部署使用后台托管配置，已忽略 URL 中的本地直连参数");
+    }, [message]);
 
     return <>{children}</>;
 }
